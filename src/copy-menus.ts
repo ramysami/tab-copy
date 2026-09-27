@@ -100,24 +100,27 @@ export async function handleMenuAction(
 ) {
   // console.log('menu click', JSON.stringify({ menuItemId, linkUrl, srcUrl, tab }, undefined, 2))
 
-  const { copySubject, formatId } =
+  const { copyMenuId, copySubject, formatId } =
     menuItemId === COPY_TAB_MENU_ID || menuItemId === COPY_TAB_STRIP_MENU_ID
       ? {
+          copyMenuId: menuItemId as CopyMenuId,
           copySubject: 'tab' as const,
           formatId: await getDefaultFormatId(),
         }
       : parseActionMenuId(`${menuItemId}`)
 
-  const tabToCopy =
+  const tabsToCopy =
     copySubject === 'tab'
-      ? tab
-      : getCopyItemTab({
+      ? copyMenuId === COPY_TAB_STRIP_MENU_ID
+        ? await getTabStripTabs(tab)
+        : tab && [tab]
+      : getCopyItemTabs({
           copyItem: copySubject,
           linkUrl,
           srcUrl,
         })
 
-  if (!tabToCopy) {
+  if (!tabsToCopy?.length) {
     throw new Error(`invalid copy subject "${copySubject}" or corresponding data`)
   }
 
@@ -129,7 +132,7 @@ export async function handleMenuAction(
 
   const copyStatusProps = {
     type: copySubject,
-    count: 1,
+    count: tabsToCopy.length,
     formatId: format.id,
   } as const
 
@@ -137,7 +140,7 @@ export async function handleMenuAction(
     // use offscreen action because extension service workers do not have direct access to the Clipboard API
     const success = await offscreenActions.copyToClipboard(
       getRepresentationsForTabs({
-        tabs: [tabToCopy],
+        tabs: tabsToCopy,
         format,
       }),
     )
@@ -155,8 +158,20 @@ export async function handleMenuAction(
     })
   }
 
+  // right-clicking a tab that is part of a multi-tab selection targets all selected tabs in its window, consistent with the browser's own tab actions
+  async function getTabStripTabs(tab?: chrome.tabs.Tab) {
+    if (!tab?.highlighted) return tab && [tab]
+
+    const highlightedTabs = await chrome.tabs.query({
+      windowId: tab.windowId,
+      highlighted: true,
+    })
+
+    return highlightedTabs.length ? highlightedTabs : [tab]
+  }
+
   // get copy item in tab form
-  function getCopyItemTab({
+  function getCopyItemTabs({
     copyItem,
     linkUrl,
     srcUrl,
@@ -164,17 +179,21 @@ export async function handleMenuAction(
     copyItem: CopyItem
     linkUrl?: string
     srcUrl?: string
-  }): chrome.tabs.Tab | undefined {
+  }): chrome.tabs.Tab[] | undefined {
     if (copyItem === 'link' && linkUrl) {
-      return getDummyTab({
-        url: linkUrl,
-      })
+      return [
+        getDummyTab({
+          url: linkUrl,
+        }),
+      ]
     }
 
     if (['image', 'video', 'audio'].includes(copyItem) && srcUrl) {
-      return getDummyTab({
-        url: srcUrl,
-      })
+      return [
+        getDummyTab({
+          url: srcUrl,
+        }),
+      ]
     }
   }
 }
