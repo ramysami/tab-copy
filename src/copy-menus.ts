@@ -17,6 +17,7 @@ import { intl } from '@/intl'
 
 const COPY_TAB_MENU_ID = 'copyTab'
 const COPY_ITEM_MENU_ID = 'copyItem'
+const COPY_TAB_STRIP_MENU_ID = 'copyTabStrip'
 
 const copyMenus = [
   {
@@ -35,6 +36,11 @@ const copyMenus = [
       'video',
       'audio',
     ],
+  },
+  {
+    // right-click menu of a tab in the tab strip (Chrome 123+)
+    id: COPY_TAB_STRIP_MENU_ID,
+    contexts: ['tab'],
   },
 ] as const satisfies { id: string; contexts: Context[] }[]
 
@@ -95,7 +101,7 @@ export async function handleMenuAction(
   // console.log('menu click', JSON.stringify({ menuItemId, linkUrl, srcUrl, tab }, undefined, 2))
 
   const { copySubject, formatId } =
-    menuItemId === COPY_TAB_MENU_ID
+    menuItemId === COPY_TAB_MENU_ID || menuItemId === COPY_TAB_STRIP_MENU_ID
       ? {
           copySubject: 'tab' as const,
           formatId: await getDefaultFormatId(),
@@ -176,6 +182,46 @@ export async function handleMenuAction(
 // --- menu refresh ---
 
 export async function refreshMenus() {
+  await refreshTabStripMenu()
+  await refreshPageMenus()
+}
+
+async function refreshTabStripMenu() {
+  const { copyTabStrip: copyTabStripMenu } = getCopyMenus()
+
+  const enableTabContextMenu = (await getOption('showTabContextMenu')).value
+
+  if (!enableTabContextMenu) {
+    await copyTabStripMenu.menu.remove()
+    return
+  }
+
+  const provideFormatSelection = (await getOption('provideTabContextMenuFormatSelection')).value
+
+  try {
+    if (provideFormatSelection) {
+      await copyTabStripMenu.menu.refresh({
+        title: sentenceCase(intl.copyTabAs()),
+        contexts: copyTabStripMenu.contexts,
+        items: getFormatMenuItems({
+          formats: await getConfiguredFormats({ visibleOnly: true }),
+          copyMenuId: copyTabStripMenu.id,
+          copySubject: 'tab',
+        }),
+      })
+    } else {
+      await copyTabStripMenu.menu.refresh({
+        title: sentenceCase(intl.copyTab()),
+        contexts: copyTabStripMenu.contexts,
+      })
+    }
+  } catch (ex) {
+    // browsers that don't support the 'tab' context reject menu creation
+    console.warn('failed to create tab context menu.', ex)
+  }
+}
+
+async function refreshPageMenus() {
   const {
     // wrap
     copyTab: copyTabMenu,
@@ -311,25 +357,25 @@ export async function refreshMenus() {
       ],
     })
   }
+}
 
-  function getFormatMenuItems({
-    formats,
-    copyMenuId,
-    copySubject,
-  }: {
-    formats: ConfiguredFormat[]
-    copyMenuId: CopyMenuId
-    copySubject: CopySubject
-  }): MenuNode[] {
-    return formats.map((format) => ({
-      id: createActionMenuId({
-        copyMenuId,
-        copySubject,
-        formatId: format.id,
-      }),
-      title: format.label.replace(/&/g, '&&'), // escape ampersand to avoid Windows interpreting it as an accelerator key. ok to keep for MacOS. todo: interestingly, while this renders correctly it still creates an accelerator for the character following the &; is this a chrome bug or are we escaping it incorrectly?
-    }))
-  }
+function getFormatMenuItems({
+  formats,
+  copyMenuId,
+  copySubject,
+}: {
+  formats: ConfiguredFormat[]
+  copyMenuId: CopyMenuId
+  copySubject: CopySubject
+}): MenuNode[] {
+  return formats.map((format) => ({
+    id: createActionMenuId({
+      copyMenuId,
+      copySubject,
+      formatId: format.id,
+    }),
+    title: format.label.replace(/&/g, '&&'), // escape ampersand to avoid Windows interpreting it as an accelerator key. ok to keep for MacOS. todo: interestingly, while this renders correctly it still creates an accelerator for the character following the &; is this a chrome bug or are we escaping it incorrectly?
+  }))
 }
 
 // --- action menu id helpers ---
